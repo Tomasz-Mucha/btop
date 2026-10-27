@@ -54,6 +54,7 @@ tab-size = 4
 #include "smc.hpp"
 #endif
 
+#include <charconv>
 #include <cmath>
 #include <fstream>
 #include <future>
@@ -1672,6 +1673,53 @@ namespace Proc {
 	int filter_found = 0;
 
 	detail_container detailed;
+
+#if defined(GPU_SUPPORT) && defined(__arm64__)
+	uint64_t old_gpu_timestamp = 0;
+
+	//* Get accumulated GPU time (ns) per pid from IOAccelerator user clients
+	auto get_gpu_times() -> std::unordered_map<size_t, uint64_t> {
+		std::unordered_map<size_t, uint64_t> gpu_times;
+		IORef accel_iter;
+		if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), accel_iter.ptr()) != KERN_SUCCESS)
+			return gpu_times;
+
+		while (IORef accel{IOIteratorNext(accel_iter)}) {
+			IORef client_iter;
+			if (IORegistryEntryGetChildIterator(accel, kIOServicePlane, client_iter.ptr()) != KERN_SUCCESS) continue;
+
+			while (IORef client{IOIteratorNext(client_iter)}) {
+				//? IOUserClientCreator is "pid <pid>, <name>", only the pid prefix is parsed
+				CFRef<CFStringRef> creator((CFStringRef)IORegistryEntryCreateCFProperty(client, CFSTR("IOUserClientCreator"), kCFAllocatorDefault, 0));
+				if (not creator or CFGetTypeID(creator) != CFStringGetTypeID()) continue;
+				char creator_str[32];
+				CFIndex creator_len = 0;
+				CFStringGetBytes(creator, CFRangeMake(0, min<CFIndex>(CFStringGetLength(creator), sizeof(creator_str))),
+					kCFStringEncodingUTF8, '?', false, (UInt8*)creator_str, sizeof(creator_str), &creator_len);
+				const std::string_view creator_view{creator_str, (size_t)creator_len};
+				size_t pid = 0;
+				if (not creator_view.starts_with("pid ")
+					or std::from_chars(creator_view.data() + 4, creator_view.data() + creator_view.size(), pid).ec != std::errc{}) continue;
+
+				CFRef<CFArrayRef> app_usage((CFArrayRef)IORegistryEntryCreateCFProperty(client, CFSTR("AppUsage"), kCFAllocatorDefault, 0));
+				if (not app_usage or CFGetTypeID(app_usage) != CFArrayGetTypeID()) continue;
+
+				//? Values from CFArray/CFDictionary getters are not owned, don't release
+				for (CFIndex i = 0; i < CFArrayGetCount(app_usage); i++) {
+					const auto usage = (CFDictionaryRef)CFArrayGetValueAtIndex(app_usage, i);
+					if (CFGetTypeID(usage) != CFDictionaryGetTypeID()) continue;
+					const auto gpu_time = (CFNumberRef)CFDictionaryGetValue(usage, CFSTR("accumulatedGPUTime"));
+					int64_t ns = 0;
+					if (gpu_time and CFGetTypeID(gpu_time) == CFNumberGetTypeID()
+						and CFNumberGetValue(gpu_time, kCFNumberSInt64Type, &ns) and ns > 0)
+						gpu_times[pid] += ns;
+				}
+			}
+		}
+		return gpu_times;
+	}
+#endif
+
 	static std::unordered_set<size_t> dead_procs;
 
 	string get_status(char s) {
@@ -1796,6 +1844,12 @@ namespace Proc {
 			}
 			uint64_t cpu_t = 0;
 
+		#if defined(GPU_SUPPORT) && defined(__arm64__)
+			const auto gpu_times = get_gpu_times();
+			const uint64_t gpu_timestamp = uptime_micros() * 1000;
+			const uint64_t gpu_time_passed = (old_gpu_timestamp > 0 and gpu_timestamp > old_gpu_timestamp ? gpu_timestamp - old_gpu_timestamp : 0);
+		#endif
+
 			std::unique_ptr<kinfo_proc[]> processes(new kinfo_proc[size / sizeof(kinfo_proc)]);
 			if (sysctl(mib, 4, processes.get(), &size, nullptr, 0) == 0) {
 				size_t count = size / sizeof(struct kinfo_proc);
@@ -1894,6 +1948,17 @@ namespace Proc {
 					//? Update cached value with latest cpu times
 					new_proc.cpu_t = cpu_t;
 
+				#if defined(GPU_SUPPORT) && defined(__arm64__)
+					//? Process gpu usage since last update, 0 if the accumulated time decreased
+					const auto gpu_found = gpu_times.find(pid);
+					const uint64_t gpu_t = (gpu_found != gpu_times.end() ? gpu_found->second : 0);
+					if (gpu_time_passed > 0 and new_proc.gpu_t > 0 and gpu_t >= new_proc.gpu_t)
+						new_proc.gpu_p = clamp(round(1000.0 * (gpu_t - new_proc.gpu_t) / gpu_time_passed) / 10.0, 0.0, 100.0);
+					else
+						new_proc.gpu_p = 0.0;
+					new_proc.gpu_t = gpu_t;
+				#endif
+
 					if (show_detailed and not got_detailed and new_proc.pid == detailed_pid) {
 						got_detailed = true;
 					}
@@ -1920,6 +1985,7 @@ namespace Proc {
 							//? Reset cpu usage for dead processes if paused and option is set
 							if (!keep_dead_proc_usage) {
 								r.cpu_p = 0.0;
+								r.gpu_p = 0.0;
 								r.mem = 0;
 							}
 						}
@@ -1935,6 +2001,9 @@ namespace Proc {
 				}
 
 				old_cputimes = cputimes;
+			#if defined(GPU_SUPPORT) && defined(__arm64__)
+				old_gpu_timestamp = gpu_timestamp;
+			#endif
 			}
 		}
 

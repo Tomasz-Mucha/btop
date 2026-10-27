@@ -1719,7 +1719,7 @@ namespace Proc {
 		auto vim_keys = Config::getB("vim_keys");
 		auto show_cpu_graphs = Config::getB("proc_cpu_graphs");
 		auto show_gpu_graphs = Config::getB("proc_gpu_graphs");
-		#if defined(__linux__)
+		#if defined(__linux__) || (defined(__APPLE__) && defined(__arm64__) && defined(GPU_SUPPORT))
 			const bool show_gpu = width >= ((show_cpu_graphs or show_gpu_graphs) ? 70 : 65);
 			const bool show_gpu_mem = width >= ((show_cpu_graphs or show_gpu_graphs) ? 78 : 73);
 		#else
