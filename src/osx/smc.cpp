@@ -18,6 +18,9 @@ tab-size = 4
 
 #include "smc.hpp"
 
+#include <cmath>
+#include <cstring>
+
 static constexpr size_t MaxIndexCount = sizeof("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") - 1;
 static constexpr const char *KeyIndexes = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -79,6 +82,11 @@ namespace Cpu {
 					// convert sp78 value to temperature
 					int intValue = val.bytes[0] * 256 + (unsigned char)val.bytes[1];
 					return static_cast<long long>(intValue / 256.0);
+				} else if (strcmp(val.dataType, DATATYPE_FLT) == 0 and val.dataSize == sizeof(float)) {
+					// convert flt value to temperature (Apple Silicon)
+					float floatValue;
+					memcpy(&floatValue, val.bytes, sizeof(floatValue));
+					return static_cast<long long>(round(floatValue));
 				}
 			}
 		}
@@ -105,6 +113,40 @@ namespace Cpu {
 			result = getSMCTemp(key);
 		}
 		return result;
+	}
+
+	// average of the GPU temperature sensors ("Tg*" keys), the key list is built once
+	long long SMCConnection::getGpuTemp() {
+		static std::vector<std::string> gpu_keys;
+		static bool keys_searched = false;
+		if (not keys_searched) {
+			SMCVal_t val;
+			char count_key[] = "#KEY";
+			if (SMCReadKey(count_key, &val) != kIOReturnSuccess) return -1;
+			keys_searched = true;
+			const UInt32 key_count = (UInt8)val.bytes[0] << 24 | (UInt8)val.bytes[1] << 16 | (UInt8)val.bytes[2] << 8 | (UInt8)val.bytes[3];
+			for (UInt32 i = 0; i < key_count; i++) {
+				SMCKeyData_t inputStructure{};
+				SMCKeyData_t outputStructure{};
+				inputStructure.data8 = SMC_CMD_READ_INDEX;
+				inputStructure.data32 = i;
+				if (SMCCall(KERNEL_INDEX_SMC, &inputStructure, &outputStructure) != kIOReturnSuccess) continue;
+				char key[5];
+				_ultostr(key, outputStructure.key);
+				if (key[0] == 'T' and key[1] == 'g') gpu_keys.push_back(key);
+			}
+		}
+
+		long long sum = 0;
+		int count = 0;
+		for (auto &key : gpu_keys) {
+			long long temp = getSMCTemp(key.data());
+			if (temp > 0 and temp < 150) {
+				sum += temp;
+				count++;
+			}
+		}
+		return count > 0 ? static_cast<long long>(round(static_cast<double>(sum) / count)) : -1;
 	}
 
 	kern_return_t SMCConnection::SMCReadKey(UInt32Char_t key, SMCVal_t *val) {

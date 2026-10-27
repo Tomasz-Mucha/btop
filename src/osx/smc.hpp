@@ -25,6 +25,8 @@ tab-size = 4
 #include <IOKit/ps/IOPowerSources.h>
 
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #define VERSION "0.01"
 
@@ -42,6 +44,7 @@ tab-size = 4
 #define DATATYPE_UINT16 "ui16"
 #define DATATYPE_UINT32 "ui32"
 #define DATATYPE_SP78 "sp78"
+#define DATATYPE_FLT "flt "
 
 // key values
 #define SMC_KEY_CPU_TEMP "TC0P" // proximity temp?
@@ -103,6 +106,7 @@ namespace Cpu {
 		virtual ~SMCConnection();
 
 		long long getTemp(int core);
+		long long getGpuTemp();
 
 	   private:
 		kern_return_t SMCReadKey(UInt32Char_t key, SMCVal_t *val);

@@ -402,6 +402,17 @@ namespace Gpu {
 			return -1;
 		}
 
+		//? Read GPU temperature from SMC, fallback when IOHID has no GPU sensors
+		static long long get_gpu_temp_smc() {
+			try {
+				Cpu::SMCConnection smcCon;
+				return smcCon.getGpuTemp();
+			} catch (std::runtime_error &e) {
+				Logger::debug("failed getting GPU temp from SMC: {}", e.what());
+				return -1;
+			}
+		}
+
 		template <bool is_init>
 		bool collect(gpu_info* gpus_slice) {
 			if (not initialized) return false;
@@ -554,6 +565,7 @@ namespace Gpu {
 			//? GPU temperature
 			if (gpus_slice[0].supported_functions.temp_info and Config::getB("check_temp")) {
 				long long temp = get_gpu_temp_iohid();
+				if (temp <= 0) temp = get_gpu_temp_smc();
 				if (temp > 0)
 					gpus_slice[0].temp.push_back(temp);
 			}
