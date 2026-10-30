@@ -1,5 +1,21 @@
 # ![btop++](Img/logo.png)
 
+> [!NOTE]
+> **About this fork**
+>
+> This is [aristocratos/btop](https://github.com/aristocratos/btop) with a few additions on the `macos-proc-gpu` branch:
+>
+> * **Per-process GPU usage on Apple Silicon:** Gpu% column and per-process GPU graphs, read from IORegistry.
+> * **GPU temperature fallback on macOS:** reads the SMC `Tg*` sensors on chips where IOHID reports none.
+> * **Per-process GPU columns (Gpu%, GMem), GPU sorting and a GPU-only filter (`g`)**, from [aristocratos/btop#1552](https://github.com/aristocratos/btop/pull/1552) by Kinan Lakhdar.
+>
+> Build on macOS (needs a C++23 compiler, e.g. a recent Xcode Command Line Tools):
+>
+> ```bash
+> git clone -b macos-proc-gpu https://github.com/Tomasz-Mucha/btop.git
+> cd btop && make && ./bin/btop
+> ```
+
 <a href="https://repology.org/project/btop/versions">
     <img src="https://repology.org/badge/vertical-allrepos/btop.svg" alt="Packaging status" align="right">
 </a>
